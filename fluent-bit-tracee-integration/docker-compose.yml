@@ -1,0 +1,89 @@
+version: '3'
+
+services:
+
+  # We use the simple tracee container here, follow the docs if you need the more
+  # heavyweight version that compiles the kernel modules, etc.
+  tracee:
+    image: aquasec/tracee
+    # Use the entrypoint that wraps stdout to a file
+    entrypoint: /forward-entrypoint.sh
+    command:
+      - /tracee/entrypoint.sh
+      - --output-template /tracee/templates/rawjson.tmpl
+    # These all come from the Tracee docs
+    privileged: true
+    pid: host
+    userns_mode: "host"
+    environment:
+      - LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host
+      - CONTAINERS_ENRICHMENT=1
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The following are for Fluent Bit integration
+      - log-volume:/logs:rw
+      - ./forward-entrypoint.sh:/forward-entrypoint.sh:ro
+      # Only required for the more heavyweight version
+      # - /lib/modules/:/lib/modules/:ro
+      # - /usr/src:/usr/src:ro
+      # - /tmp/tracee:/tmp/tracee
+    ports:
+      # Metrics
+      - "4466:4466"
+
+  fluent-bit:
+    image: fluent/fluent-bit:1.9.6
+    volumes:
+      - log-volume:/logs:ro
+      # Mount our local configuration so it can be easily customised.
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+    ports:
+      # Metrics
+      - "2020:2020"
+    depends_on:
+      - tracee
+      # The following can be removed
+      - loki
+      - prometheus
+
+# Let us run up a Loki/Prom/Grafana stack as well to query all this.
+# Every service below can be removed if you have your own stack to send to.
+  prometheus:
+    image: prom/prometheus:v2.33.3
+    volumes:
+      - ./monitoring-stack/prometheus.yml/:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-admin-api'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+
+  grafana:
+    image: grafana/grafana
+    user: "472"
+    depends_on:
+      - prometheus
+    ports:
+      - 3000:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring-stack/grafana/provisioning/:/etc/grafana/provisioning/
+    env_file:
+      - ./monitoring-stack/grafana/config.monitoring
+
+  loki:
+    image: grafana/loki:2.5.0
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/local-config.yaml
+
+volumes:
+  grafana-data:
+  prometheus-data:
+  log-volume:
