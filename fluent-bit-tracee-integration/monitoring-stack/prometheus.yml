@@ -1,0 +1,13 @@
+global:
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: fluent-bit
+    static_configs:
+    # Refer to the service name and port specified
+      - targets: ['fluent-bit:2020']
+  - job_name: tracee
+    static_configs:
+      - targets: ['tracee:4466']
